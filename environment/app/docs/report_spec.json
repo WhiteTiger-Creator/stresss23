@@ -109,7 +109,8 @@
           "repair_audit.json"
         ]
       }
-    }
+    },
+    "events_flag_contract": "The raw event stream is selected ONLY by --input (default /app/data/events.json) on the workflow and on `repair`; there is NO --events flag anywhere. `diagnose` accepts ONLY --dossier and --report (it takes neither --input nor --events) and always reads events from the fixed path /app/data/events.json; passing any other flag to diagnose is an error (exit non-zero, write no report)."
   },
   "diagnosis_report": {
     "required_keys_diagnosed": [
@@ -362,8 +363,10 @@
         "run it with the requested output directory",
         "run it again to verify idempotency"
       ],
-      "frozen_original": "never write to /app/workflow/.export_report.original"
-    }
+      "frozen_original": "never write to /app/workflow/.export_report.original",
+      "rebuild_source": "Every `repair` invocation reconstructs the corrected workflow FROM the frozen pre-incident snapshot at /app/workflow/.export_report.original (which still contains the defects) and OVERWRITES the active /app/workflow/export_report.py with the corrected source BEFORE rerunning it. This must happen on every invocation regardless of prior state, and identically when a custom --output-dir is supplied \u2014 never assume the active workflow is already patched."
+    },
+    "canonicalization_contract": "issued_ms is coerced to an int: a bool/int/float is int()'d; a string is stripped then int()'d; a missing, non-numeric, or otherwise unparseable value is coerced to 0 (never raised as an error). severity and issuer are str(...).strip().lower() normalized. These coercions run before dedupe, matrix counts, and every checksum."
   },
   "outputs": {
     "summary_json": {
@@ -395,7 +398,8 @@
       "chain_digest_checksum": "sha256('|'.join(chain_digest values in final signal order)) lowercase 64 hex chars",
       "max_chain_reach_score": "maximum chain_reach_score across final signal rows (0 when none)",
       "chain_reach_digest_checksum": "sha256('|'.join(chain_reach_digest values in final signal order)) lowercase 64 hex chars",
-      "signal_digest_checksum": "sha256('|'.join(signal_digest values in final signal order)) lowercase 64 hex chars"
+      "signal_digest_checksum": "sha256('|'.join(signal_digest values in final signal order)) lowercase 64 hex chars",
+      "schema_version_value": "summary.schema_version must equal exactly the string \"identity-triage-v2\"."
     },
     "issuer_matrix_json": {
       "description": "Flat map of issuer -> per-severity counts from canonical deduped certs.",
