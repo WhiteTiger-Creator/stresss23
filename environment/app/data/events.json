@@ -1,0 +1,226 @@
+[
+  {
+    "cert_id": "crt-401",
+    "issued_ms": 16290000000000,
+    "severity": "critical",
+    "issuer": "internal-ca",
+    "detector": "malicious san injection",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-402",
+    "issued_ms": 16290000000250,
+    "severity": "Critical",
+    "issuer": "internal-ca",
+    "detector": "csr identity hijack",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-403",
+    "issued_ms": 16290000000800,
+    "severity": "high",
+    "issuer": "internal-ca",
+    "detector": "validity period tampering",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-410",
+    "issued_ms": 16290000001100,
+    "severity": "HIGH ",
+    "issuer": "edge-ca",
+    "detector": "profile violation flood",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-411",
+    "issued_ms": 16290000001500,
+    "severity": "high",
+    "issuer": "edge-ca",
+    "detector": "ocsp replay storm",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-420",
+    "issued_ms": 16290000002000,
+    "severity": "high",
+    "issuer": "partner-ca",
+    "detector": "wildcard san abuse",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-404",
+    "issued_ms": 16290000003000,
+    "severity": "high",
+    "issuer": "internal-ca",
+    "detector": "asn1 parsing exploit",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-405",
+    "issued_ms": 16290000003150,
+    "severity": "critical",
+    "issuer": "internal-ca",
+    "detector": "ca key theft",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-430",
+    "issued_ms": 16290000003400,
+    "severity": "critical",
+    "issuer": "build-ca",
+    "detector": "malicious san injection",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-431",
+    "issued_ms": 16290000003700,
+    "severity": "critical",
+    "issuer": "device-ca",
+    "detector": "malicious san injection",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-440",
+    "issued_ms": 16290000003900,
+    "severity": "high",
+    "issuer": "legacy-ca",
+    "detector": "issuance log tampering burst",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-441",
+    "issued_ms": 16290000005200,
+    "severity": "high",
+    "issuer": "internal-ca",
+    "detector": "privileged template grant",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-442",
+    "issued_ms": 16290000005400,
+    "severity": "medium",
+    "issuer": "edge-ca",
+    "detector": "unfamiliar acme client",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-443",
+    "issued_ms": 16290000005500,
+    "severity": "low",
+    "issuer": "partner-ca",
+    "detector": "revoked cert reuse",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-444",
+    "issued_ms": 16290000005600,
+    "severity": "medium",
+    "issuer": "legacy-ca",
+    "detector": "enroll from tor exit",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-450",
+    "issued_ms": 16290000006200,
+    "severity": "high",
+    "issuer": "internal-ca",
+    "detector": "malicious san injection",
+    "dismissed": true
+  },
+  {
+    "cert_id": "crt-451",
+    "issued_ms": 16290000006300,
+    "severity": "critical",
+    "issuer": "edge-ca",
+    "detector": "profile violation flood",
+    "dismissed": "yes"
+  },
+  {
+    "cert_id": "crt-460",
+    "issued_ms": 16290000007200,
+    "severity": "high",
+    "issuer": "device-ca",
+    "detector": "ocsp replay storm",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-461",
+    "issued_ms": 16290000007350,
+    "severity": "critical",
+    "issuer": "device-ca",
+    "detector": "ocsp replay storm",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-470",
+    "issued_ms": 16290000008200,
+    "severity": "high",
+    "issuer": "partner-ca",
+    "detector": "malicious san injection",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-471",
+    "issued_ms": 16290000008500,
+    "severity": "high",
+    "issuer": "build-ca",
+    "detector": "brute force enroll lockout",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-472",
+    "issued_ms": 16290000008800,
+    "severity": "critical",
+    "issuer": "internal-ca",
+    "detector": "privileged eku grant",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-473",
+    "issued_ms": 16290000009200,
+    "severity": "high",
+    "issuer": "edge-ca",
+    "detector": "exfil via cert extension",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-474",
+    "issued_ms": 16290000009400,
+    "severity": "critical",
+    "issuer": "legacy-ca",
+    "detector": "issuance drift anomaly",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-480",
+    "issued_ms": 16290000010200,
+    "severity": "high",
+    "issuer": "partner-ca",
+    "detector": "private key in csr",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-481",
+    "issued_ms": 16290000010290,
+    "severity": "high",
+    "issuer": "partner-ca",
+    "detector": "signing key exposure",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-401",
+    "issued_ms": 16290000000120,
+    "severity": "high",
+    "issuer": "internal-ca",
+    "detector": "malicious san injection",
+    "dismissed": false
+  },
+  {
+    "cert_id": "crt-440",
+    "issued_ms": 16290000003900,
+    "severity": "critical",
+    "issuer": "legacy-ca",
+    "detector": "issuance log tampering burst",
+    "dismissed": false
+  }
+]

@@ -1,0 +1,538 @@
+{
+  "title": "Certwarden Signal Rollup \u2014 Audit & Export Spec",
+  "version": "5.0",
+  "human_implementation_guide": "/app/docs/output_contract.md",
+  "quick_contract_index": {
+    "required_issue_ids": [
+      "wrong_source_field",
+      "risk_threshold_filter",
+      "recency_order",
+      "risk_class_normalization",
+      "dedupe_event",
+      "benign_filter"
+    ],
+    "diagnose_is_stateless": "every explicit diagnose invocation writes pipeline_status=diagnosed and omits verified_summary/output_paths, regardless of existing repaired files or active workflow contents",
+    "issue_item_shape": {
+      "top_level": [
+        "id",
+        "severity",
+        "description",
+        "resolution",
+        "evidence"
+      ],
+      "nested_evidence": [
+        "dossier_quote",
+        "pipeline_evidence",
+        "repair_action"
+      ],
+      "minimum_lengths": [
+        30,
+        10,
+        10
+      ],
+      "required_term_case": "case-sensitive for all three evidence strings, including agent-composed repair_action"
+    },
+    "repair_post_repair_exact_fields": [
+      "escalated_count",
+      "rerun_escalated_count"
+    ],
+    "forbidden_executable_tokens": [
+      "event[\"issued_at\"]",
+      "severity == \"critical\""
+    ],
+    "repair_output_path_keys": [
+      "summary_json",
+      "escalated_jsonl",
+      "issuer_matrix_json"
+    ],
+    "final_default_state": "/app/output/diagnosis.json must be the repaired-mode report",
+    "read_in_full": "This file is the authoritative schema reference; every key set and payload it lists applies in full.",
+    "input_stats_exact_keys": [
+      "cert_count",
+      "unique_cert_ids",
+      "issuers"
+    ],
+    "verified_summary_required_fields": [
+      "schema_version",
+      "raw_cert_count",
+      "unique_cert_ids",
+      "total_certs",
+      "severity_counts",
+      "issuers",
+      "escalated_count",
+      "dismissed_excluded_count",
+      "override_excluded_count",
+      "override_compaction_checksum",
+      "max_override_pressure_score",
+      "max_pressure_index",
+      "max_wide_pressure_score",
+      "chain_count",
+      "max_chain_risk_score",
+      "chain_digest_checksum",
+      "max_chain_reach_score",
+      "chain_reach_digest_checksum",
+      "signal_digest_checksum",
+      "critical_escalation_ids",
+      "critical_escalation_count",
+      "max_escalation_pressure",
+      "escalation_ledger_checksum"
+    ]
+  },
+  "cli": {
+    "path": "/app/cert_audit.py",
+    "subcommands": {
+      "diagnose": {
+        "usage": "python3 /app/cert_audit.py diagnose --dossier PATH --report PATH",
+        "defaults": {
+          "dossier": "/app/incident/export_dossier.md",
+          "report": "/app/output/diagnosis.json"
+        },
+        "must_include_all_allowed_ids": true,
+        "state_contract": "diagnose is stateless: always set pipeline_status to diagnosed and omit verified_summary/output_paths even when repair artifacts already exist or the active workflow is repaired",
+        "must_not_include_repaired_keys": [
+          "verified_summary",
+          "output_paths"
+        ],
+        "input_events_path": "/app/data/events.json"
+      },
+      "repair": {
+        "usage": "python3 /app/cert_audit.py repair --output-dir PATH",
+        "defaults": {
+          "output_dir": "/app/output"
+        },
+        "output_dir_contract": "must write all repair outputs under the provided --output-dir path; do not hardcode /app/output when a custom path is supplied",
+        "required_output_files": [
+          "summary.json",
+          "issuer_matrix.json",
+          "escalated.jsonl",
+          "diagnosis.json",
+          "repair_audit.json"
+        ]
+      }
+    }
+  },
+  "diagnosis_report": {
+    "required_keys_diagnosed": [
+      "pipeline_status",
+      "issues_found",
+      "input_stats"
+    ],
+    "required_keys_repaired": [
+      "pipeline_status",
+      "issues_found",
+      "input_stats",
+      "verified_summary",
+      "output_paths"
+    ],
+    "pipeline_status_diagnosed": "diagnosed",
+    "pipeline_status_repaired": "repaired",
+    "issues_found_item": {
+      "required_fields": [
+        "id",
+        "severity",
+        "description",
+        "resolution",
+        "evidence"
+      ],
+      "allowed_ids": [
+        "wrong_source_field",
+        "risk_threshold_filter",
+        "recency_order",
+        "risk_class_normalization",
+        "dedupe_event",
+        "benign_filter"
+      ],
+      "evidence": {
+        "required_fields": [
+          "dossier_quote",
+          "pipeline_evidence",
+          "repair_action"
+        ],
+        "pipeline_evidence_source": "/app/workflow/.export_report.original",
+        "pipeline_evidence_format": "literal substring excerpt from frozen original workflow source",
+        "dossier_quote_format": "verbatim excerpt from /app/incident/export_dossier.md (whitespace-normalized match)",
+        "minimum_lengths": {
+          "dossier_quote": 30,
+          "pipeline_evidence": 10,
+          "repair_action": 10
+        },
+        "term_matching": "case-sensitive substring match for every required_terms_by_issue entry in dossier_quote, pipeline_evidence, and repair_action; repair_action is agent-composed but its required terms still match case-sensitively",
+        "required_terms_by_issue": {
+          "wrong_source_field": {
+            "dossier_quote": [
+              "timestamp",
+              "mismatch"
+            ],
+            "pipeline_evidence": [
+              "event[\"issued_at\"]"
+            ],
+            "repair_action": [
+              "timestamp source"
+            ]
+          },
+          "risk_threshold_filter": {
+            "dossier_quote": [
+              "queue",
+              "missing"
+            ],
+            "pipeline_evidence": [
+              "severity == \"critical\""
+            ],
+            "repair_action": [
+              "severity coverage"
+            ]
+          },
+          "recency_order": {
+            "dossier_quote": [
+              "ordering",
+              "inconsistent"
+            ],
+            "pipeline_evidence": [
+              "sort",
+              "issued_ms"
+            ],
+            "repair_action": [
+              "recency ordering"
+            ]
+          },
+          "risk_class_normalization": {
+            "dossier_quote": [
+              "mixed-case",
+              "diverged"
+            ],
+            "pipeline_evidence": [
+              "severity"
+            ],
+            "repair_action": [
+              "normalize severity"
+            ]
+          },
+          "dedupe_event": {
+            "dossier_quote": [
+              "duplicate",
+              "competing"
+            ],
+            "pipeline_evidence": [
+              "for event in events"
+            ],
+            "repair_action": [
+              "deterministic collapse"
+            ]
+          },
+          "benign_filter": {
+            "dossier_quote": [
+              "dismissed",
+              "leaked"
+            ],
+            "pipeline_evidence": [
+              "signals.append"
+            ],
+            "repair_action": [
+              "exclude dismissed"
+            ]
+          }
+        }
+      }
+    },
+    "input_stats": {
+      "required_fields": [
+        "cert_count",
+        "unique_cert_ids",
+        "issuers"
+      ],
+      "exact_key_names": "input_stats keys must be exactly cert_count, unique_cert_ids, issuers",
+      "issuers_sort": "ascending alphabetical",
+      "source_events_path": "/app/data/events.json"
+    },
+    "verified_summary": {
+      "required_fields": [
+        "schema_version",
+        "raw_cert_count",
+        "unique_cert_ids",
+        "total_certs",
+        "severity_counts",
+        "issuers",
+        "escalated_count",
+        "dismissed_excluded_count",
+        "override_excluded_count",
+        "override_compaction_checksum",
+        "max_override_pressure_score",
+        "max_pressure_index",
+        "max_wide_pressure_score",
+        "chain_count",
+        "max_chain_risk_score",
+        "chain_digest_checksum",
+        "max_chain_reach_score",
+        "chain_reach_digest_checksum",
+        "signal_digest_checksum",
+        "critical_escalation_ids",
+        "critical_escalation_count",
+        "max_escalation_pressure",
+        "escalation_ledger_checksum"
+      ]
+    },
+    "output_paths": {
+      "summary_json": "<output-dir>/summary.json",
+      "escalated_jsonl": "<output-dir>/escalated.jsonl",
+      "issuer_matrix_json": "<output-dir>/issuer_matrix.json",
+      "key_naming_contract": "keys are semantic snake_case names, not filenames"
+    }
+  },
+  "repair_audit": {
+    "required_keys": [
+      "patched_workflow",
+      "processing_steps",
+      "removed_tokens",
+      "pre_repair",
+      "post_repair"
+    ],
+    "processing_steps": [
+      "normalize_issued_ms",
+      "normalize_severity",
+      "dedupe_cert_id",
+      "load_dismissal_overrides",
+      "apply_override_suppression",
+      "filter_dismissed",
+      "correlate_chains",
+      "score_chains",
+      "propagate_chain_reach",
+      "build_signals"
+    ],
+    "patched_workflow": "/app/workflow/export_report.py",
+    "forbidden_executable_tokens": [
+      "event[\"issued_at\"]",
+      "severity == \"critical\""
+    ],
+    "removed_tokens_schema": {
+      "description": "Map each forbidden_executable_tokens literal string to a boolean that indicates it was removed from executable behavior.",
+      "required_key_source": "keys must be the exact literal strings from forbidden_executable_tokens (no semantic aliases)",
+      "required_keys_exact": [
+        "event[\"issued_at\"]",
+        "severity == \"critical\""
+      ],
+      "example_valid": {
+        "event[\"issued_at\"]": true,
+        "severity == \"critical\"": false
+      },
+      "example_invalid": {
+        "reads_issued_at": true,
+        "critical_only_filter": false
+      }
+    },
+    "pre_repair": {
+      "required_fields": [
+        "pipeline_source_sha256",
+        "pipeline_tokens_present"
+      ],
+      "capture_order": "before any write to export_report.py",
+      "capture_source": "/app/workflow/.export_report.original",
+      "capture_rule": "pipeline_source_sha256 is hashlib.sha256(Path('/app/workflow/.export_report.original').read_bytes()).hexdigest(); pipeline_tokens_present is computed from that frozen original before applying any patch",
+      "pipeline_tokens_present_schema": {
+        "description": "Map each forbidden_executable_tokens literal string to a boolean that indicates it was present before repair.",
+        "required_key_source": "keys must be the exact literal strings from forbidden_executable_tokens (no semantic aliases)",
+        "required_keys_exact": [
+          "event[\"issued_at\"]",
+          "severity == \"critical\""
+        ]
+      }
+    },
+    "post_repair": {
+      "required_fields": [
+        "escalated_count",
+        "rerun_escalated_count"
+      ]
+    }
+  },
+  "workflow_repair": {
+    "path": "/app/workflow/export_report.py",
+    "cli_usage": "python3 /app/workflow/export_report.py --input PATH --output-dir PATH",
+    "defaults": {
+      "input": "/app/data/events.json",
+      "output_dir": "/app/output",
+      "dismissal_overrides": "/app/data/dismissal_overrides.json"
+    },
+    "implementation_freedom": "helper names, constant names, normalization syntax, graph representation, and sorting syntax are implementation details; generated behavior is contractual",
+    "acceptance_contract": "The repaired workflow must satisfy canonicalization and outputs without relying on test or solution artifacts.",
+    "repair_state_contract": {
+      "self_contained": "every cert_audit.py repair invocation must write a correct repaired implementation to /app/workflow/export_report.py before running it",
+      "starting_state": "verification may copy /app/workflow/.export_report.original over the active workflow immediately before repair, including with a custom --output-dir; never assume solve.sh or an earlier command already patched it",
+      "sequence": [
+        "capture pre-repair hash and token evidence from the frozen original",
+        "install the corrected active workflow",
+        "run it with the requested output directory",
+        "run it again to verify idempotency"
+      ],
+      "frozen_original": "never write to /app/workflow/.export_report.original"
+    }
+  },
+  "outputs": {
+    "summary_json": {
+      "schema_version": "identity-triage-v2",
+      "severity_counts_key_order": [
+        "critical",
+        "high",
+        "medium",
+        "low"
+      ],
+      "override_excluded_count": "count of signal candidates excluded by canonicalized override windows",
+      "override_compaction_checksum": "SHA-256 of the exact payload defined by override_checksum_serialization",
+      "override_checksum_serialization": {
+        "row_format": "issuer|severity_scope|start_ms|end_ms",
+        "row_order": "sort by (issuer,severity_scope) ascending, then compacted interval (start_ms,end_ms) ascending",
+        "row_delimiter": "one LF character (\\n)",
+        "trailing_delimiter": "none; do not append LF or | after the final row",
+        "encoding": "UTF-8",
+        "empty_input": "hash the empty byte string",
+        "digest": "lowercase hashlib.sha256(payload.encode('utf-8')).hexdigest()",
+        "test_vector_payload": "edge|critical|300|360\nedge|high|100|220",
+        "test_vector_sha256": "03185b505ae526bc703c4e14bd088572497a9f801a18fba4fc50d2fdab082522"
+      },
+      "max_override_pressure_score": "maximum override_pressure_score across final signal rows (0 when none)",
+      "max_wide_pressure_score": "maximum wide_pressure_score across final signal rows (0 when none)",
+      "max_pressure_index": "maximum pressure_index (override_pressure_score + wide_pressure_score) across final signal rows (0 when none)",
+      "chain_count": "number of distinct chain_id values across final signal rows",
+      "max_chain_risk_score": "maximum chain_risk_score across final signal rows (0 when none)",
+      "chain_digest_checksum": "sha256('|'.join(chain_digest values in final signal order)) lowercase 64 hex chars",
+      "max_chain_reach_score": "maximum chain_reach_score across final signal rows (0 when none)",
+      "chain_reach_digest_checksum": "sha256('|'.join(chain_reach_digest values in final signal order)) lowercase 64 hex chars",
+      "signal_digest_checksum": "sha256('|'.join(signal_digest values in final signal order)) lowercase 64 hex chars"
+    },
+    "issuer_matrix_json": {
+      "description": "Flat map of issuer -> per-severity counts from canonical deduped certs.",
+      "shape": {
+        "<issuer>": {
+          "critical": 0,
+          "high": 0,
+          "medium": 0,
+          "low": 0
+        }
+      },
+      "issuer_sort": "ascending alphabetical",
+      "severity_key_order": [
+        "critical",
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "escalated_jsonl": {
+      "required_fields": [
+        "cert_id",
+        "issued_ms",
+        "severity",
+        "issuer",
+        "detector",
+        "override_pressure_score",
+        "pressure_index",
+        "wide_pressure_score",
+        "chain_id",
+        "chain_size",
+        "chain_span_ms",
+        "chain_risk_score",
+        "chain_digest",
+        "chain_reach_score",
+        "chain_reach_depth",
+        "chain_reach_path",
+        "chain_reach_digest",
+        "signal_digest"
+      ],
+      "sort": "issued_ms desc, severity rank desc, chain_risk_score desc, chain_reach_score desc, override_pressure_score desc, cert_id asc",
+      "severities_included": [
+        "high",
+        "critical"
+      ],
+      "exclude_dismissed": true,
+      "json_format": "compact (no space after colon)",
+      "field_types": {
+        "chain_reach_path": "JSON array (list) of chain_id strings naming the strongest reach path in order. Emit the array itself, not a joined string. The 'comma_joined_chain_reach_path' token used inside chain_reach_digest and signal_digest is a DIGEST-ONLY derivation (','.join of this array) and does not change the emitted field type, which is the array.",
+        "chain_reach_score": "integer",
+        "chain_reach_depth": "integer",
+        "override_pressure_score": "integer"
+      }
+    }
+  },
+  "guardrails": {
+    "frozen_original": "/app/workflow/.export_report.original must remain byte-identical",
+    "test_artifacts": "The repaired source must derive every value from the operational inputs and the governing decisions, and must not read external grading resources.",
+    "generalization": "derive outputs from --input and fixed operational data sources rather than fixture values"
+  },
+  "context": {
+    "dossier_path": "/app/incident/export_dossier.md",
+    "minimum_line_count": 350
+  },
+  "dismissal_overrides": {
+    "source_path": "/app/data/dismissal_overrides.json",
+    "row_fields": [
+      "issuer",
+      "severity_scope",
+      "start_ms",
+      "end_ms"
+    ]
+  },
+  "digest_payloads": {
+    "chain_digest": "first 12 lowercase SHA256 hex chars of chain_id|chain_size|chain_span_ms|chain_risk_score|comma_joined_chain_cert_ids",
+    "chain_id": "first 10 lowercase SHA1 hex chars of comma_joined_chain_cert_ids",
+    "chain_reach_digest": "first 12 lowercase SHA256 hex chars of chain_id|chain_reach_score|chain_reach_depth|comma_joined_chain_reach_path",
+    "signal_digest": "first 12 lowercase SHA1 hex chars of cert_id|issued_ms|severity|issuer|detector|override_pressure_score|pressure_index|chain_id|chain_size|chain_span_ms|chain_risk_score|chain_digest|chain_reach_score|chain_reach_depth|comma_joined_chain_reach_path|chain_reach_digest",
+    "escalation_ledger_checksum": "SHA-256 over one line per signal row in escalated.jsonl export order, `cert_id|escalation_pressure|c|carry_out` with c=1 for an escalation-critical row else 0, joined by a single newline, no trailing newline, hashed over UTF-8. The values themselves are governed by the dossier."
+  },
+  "semantics_source": {
+    "notes": "This document is the output contract only: CLI shapes, report schemas, exact key sets, checksum serialization and digest payload encodings. It does NOT define how values are derived.",
+    "authority": "Normalization, dedupe tie-breaks, override windows/matching/pressure, chain correlation and the directed reach propagation were settled during the Certwarden review; the authoritative cert is the #PKI-ticketed decision notes inside /app/incident/export_dossier.md. Where an early triage proposal conflicts with a later decision, the later decision wins."
+  },
+  "field_types": {
+    "critical_escalation_ids": {
+      "type": "array",
+      "items": "string",
+      "order": "sorted lexicographically ascending",
+      "note": "cert_id values as strings, sorted -- not in export order."
+    },
+    "_note": "Declares the exact key name, JSON type and container shape of every field are matched literally. These are output-format facts only; how each value is derived is governed by the dossier's ticketed decisions.",
+    "pipeline_status": {
+      "type": "string",
+      "enum": [
+        "diagnosed",
+        "repaired"
+      ],
+      "note": "The key is named exactly `pipeline_status`. `diagnosis`, `status` and `state` are not accepted. A diagnose run reports `diagnosed`; a repair run reports `repaired`."
+    },
+    "input_stats": {
+      "type": "object",
+      "keys": [
+        "cert_count",
+        "unique_cert_ids",
+        "issuers"
+      ],
+      "note": "Exactly these three keys, no aliases and no extras."
+    },
+    "issuers": {
+      "type": "array",
+      "items": "string",
+      "order": "sorted ascending",
+      "note": "A JSON array of the distinct asset-group names, sorted. It is NOT a count -- returning an integer here fails, even when the integer equals the array length."
+    },
+    "cert_count": {
+      "type": "integer",
+      "note": "Number of cert certs read from the input, counted BEFORE deduplication."
+    },
+    "unique_cert_ids": {
+      "type": "integer",
+      "note": "Number of distinct cert_id values in the input. This is the deduplicated count; cert_count is not."
+    },
+    "raw_cert_count": {
+      "type": "integer",
+      "note": "verified_summary field. Raw input cert count BEFORE deduplication -- do not substitute the deduplicated count here."
+    },
+    "issues_found_item": {
+      "type": "object",
+      "keys": [
+        "id",
+        "severity",
+        "description",
+        "resolution",
+        "evidence"
+      ],
+      "note": "Every finding carries all five keys; `evidence` is itself an object with exactly `dossier_quote`, `pipeline_evidence` and `repair_action`. Omitting severity, description or resolution fails the schema check."
+    }
+  }
+}

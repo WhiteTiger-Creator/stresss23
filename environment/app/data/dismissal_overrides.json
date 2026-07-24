@@ -1,0 +1,74 @@
+[
+  {
+    "issuer": "device-ca",
+    "severity_scope": "all",
+    "start_ms": 16290000007150,
+    "end_ms": 16290000007400
+  },
+  {
+    "issuer": "internal-ca",
+    "severity_scope": "critical",
+    "start_ms": 16290000008750,
+    "end_ms": 16290000008850
+  },
+  {
+    "issuer": "build-ca",
+    "severity_scope": "high",
+    "start_ms": 16290000008450,
+    "end_ms": 16290000008480
+  },
+  {
+    "issuer": "edge-ca",
+    "severity_scope": "high",
+    "start_ms": 16290000001000,
+    "end_ms": 16290000001200
+  },
+  {
+    "issuer": "internal-ca",
+    "severity_scope": "all",
+    "start_ms": 16290000000200,
+    "end_ms": 16290000000300
+  },
+  {
+    "issuer": "internal-ca",
+    "severity_scope": "all",
+    "start_ms": 16290000000300,
+    "end_ms": 16290000000360
+  },
+  {
+    "issuer": "partner-ca",
+    "severity_scope": "all",
+    "start_ms": 16290000001800,
+    "end_ms": 16290000001847
+  },
+  {
+    "issuer": "legacy-ca",
+    "severity_scope": "all",
+    "start_ms": 16290000003700,
+    "end_ms": 16290000003761
+  },
+  {
+    "issuer": "partner-ca",
+    "severity_scope": "all",
+    "start_ms": 16290000008000,
+    "end_ms": 16290000008071
+  },
+  {
+    "issuer": "build-ca",
+    "severity_scope": "all",
+    "start_ms": 16290000008300,
+    "end_ms": 16290000008391
+  },
+  {
+    "issuer": "edge-ca",
+    "severity_scope": "all",
+    "start_ms": 16290000009000,
+    "end_ms": 16290000009047
+  },
+  {
+    "issuer": "partner-ca",
+    "severity_scope": "all",
+    "start_ms": 16290000010000,
+    "end_ms": 16290000010061
+  }
+]

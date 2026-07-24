@@ -1,0 +1,98 @@
+[
+  {
+    "cert_id": "cx-01",
+    "issued_ms": 16290000000000,
+    "severity": "critical",
+    "issuer": "internal-ca",
+    "detector": "malicious san injection",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-02",
+    "issued_ms": 16290000000350,
+    "severity": "high",
+    "issuer": "internal-ca",
+    "detector": "csr identity hijack",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-03",
+    "issued_ms": 16290000001600,
+    "severity": "high",
+    "issuer": "partner-ca",
+    "detector": "ocsp replay storm",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-04",
+    "issued_ms": 16290000002100,
+    "severity": "critical",
+    "issuer": "edge-ca",
+    "detector": "malicious san injection",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-05",
+    "issued_ms": 16290000002500,
+    "severity": "high",
+    "issuer": "build-ca",
+    "detector": "malicious san injection",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-06",
+    "issued_ms": 16290000003100,
+    "severity": "critical",
+    "issuer": "legacy-ca",
+    "detector": "issuance drift anomaly",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-07",
+    "issued_ms": 16290000003700,
+    "severity": "high",
+    "issuer": "device-ca",
+    "detector": "private key in csr",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-08",
+    "issued_ms": 16290000004100,
+    "severity": "medium",
+    "issuer": "internal-ca",
+    "detector": "privileged eku grant",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-09",
+    "issued_ms": 16290000004300,
+    "severity": "low",
+    "issuer": "partner-ca",
+    "detector": "revoked cert reuse",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-10",
+    "issued_ms": 16290000004700,
+    "severity": "high",
+    "issuer": "edge-ca",
+    "detector": "profile violation flood",
+    "dismissed": true
+  },
+  {
+    "cert_id": "cx-11",
+    "issued_ms": 16290000005100,
+    "severity": "high",
+    "issuer": "legacy-ca",
+    "detector": "issuance log tampering burst",
+    "dismissed": false
+  },
+  {
+    "cert_id": "cx-12",
+    "issued_ms": 16290000005400,
+    "severity": "high",
+    "issuer": "internal-ca",
+    "detector": "validity period tampering",
+    "dismissed": false
+  }
+]
