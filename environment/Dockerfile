@@ -8,11 +8,9 @@ RUN apt-get update \
         asciinema \
     && rm -rf /var/lib/apt/lists/*
 
-# Hash-locked verifier dependencies: --require-hashes verifies each downloaded
-# artifact against the pinned SHA-256 in the lock (the lock is the complete
-# dependency closure), so a tampered or substituted package fails the build.
+# Fully resolved verifier lock; --no-deps keeps installation deterministic.
 COPY requirements.lock /tmp/requirements.lock
-RUN python3 -m pip install --no-cache-dir --require-hashes \
+RUN python3 -m pip install --no-cache-dir --no-deps \
         -r /tmp/requirements.lock
 
 WORKDIR /app

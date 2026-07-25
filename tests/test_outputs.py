@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -32,6 +33,7 @@ ISSUE_EVIDENCE_TERMS = SPEC_DATA["diagnosis_report"]["issues_found_item"]["evide
     "required_terms_by_issue"
 ]
 REQUIRED_ISSUE_IDS = SPEC_DATA["diagnosis_report"]["issues_found_item"]["allowed_ids"]
+FORBIDDEN_TOKENS = ('event["issued_at"]', 'severity == "critical"')
 ANOMALY_SEVERITIES = {"high", "critical"}
 SEVERITY_ORDER = ("critical", "high", "medium", "low")
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
@@ -39,6 +41,33 @@ SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
 def _normalize_ws(text: str) -> str:
     return " ".join(text.split())
+
+
+def _executable_text(src: str) -> str:
+    docstring_lines: set[int] = set()
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef)):
+            continue
+        if not node.body:
+            continue
+        first = node.body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):  # noqa: SIM102
+            if isinstance(first.value.value, str):
+                end = getattr(first, "end_lineno", first.lineno)
+                docstring_lines.update(range(first.lineno, end + 1))
+
+    lines: list[str] = []
+    for line_number, line in enumerate(src.splitlines(), start=1):
+        if line_number in docstring_lines:
+            continue
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if "#" in line:
+            line = line.split("#", 1)[0]
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _load_events(path: Path) -> list[dict]:
@@ -680,6 +709,7 @@ def test_issue_item_required_fields(diagnosis: dict):
 
 
 def test_issue_evidence(diagnosis: dict):
+    original_pipeline = ORIGINAL_PIPELINE.read_text()
     issues = {item["id"]: item for item in diagnosis["issues_found"]}
     for issue_id, terms in ISSUE_EVIDENCE_TERMS.items():
         evidence = issues[issue_id]["evidence"]
@@ -691,6 +721,7 @@ def test_issue_evidence(diagnosis: dict):
             assert term in evidence["dossier_quote"]
         for term in terms["pipeline_evidence"]:
             assert term in evidence["pipeline_evidence"]
+        assert evidence["pipeline_evidence"] in original_pipeline
         for term in terms["repair_action"]:
             assert term in evidence["repair_action"]
 
@@ -784,6 +815,16 @@ def test_escalated_jsonl_compact_format():
         assert json.dumps(parsed, separators=(",", ":")) == line
 
 
+def test_original_snapshot_preserved(expected: dict):
+    assert ORIGINAL_PIPELINE.exists()
+    digest = hashlib.sha256(ORIGINAL_PIPELINE.read_bytes()).hexdigest()
+    assert digest == expected["broken_pipeline_sha256"]
+    original = ORIGINAL_PIPELINE.read_text()
+    for token in FORBIDDEN_TOKENS:
+        assert token in original
+    assert ".lower(" not in original
+
+
 def test_pipeline_output_tracks_its_input(tmp_path_factory):
     """The repaired pipeline computes from its --input rather than emitting fixed
     values, so its output changes when the input changes. A solution that hard-coded
@@ -854,6 +895,40 @@ def test_repair_runtime_does_not_read_tests_tree():
             env=env,
         )
         assert result.returncode == 0, result.stderr
+
+
+def test_broken_snapshot_produces_wrong_export(expected: dict):
+    with tempfile.TemporaryDirectory() as tmp:
+        broken = Path(tmp) / "export_report.py"
+        out = Path(tmp) / "out"
+        shutil.copy(ORIGINAL_PIPELINE, broken)
+        result = _run_pipeline(pipeline=broken, output_dir=out)
+        assert result.returncode == 0, result.stderr
+        summary = json.loads((out / "summary.json").read_text())
+        escalated = _escalated_rows(out / "escalated.jsonl")
+        assert summary != _compute_summary(_load_events(INPUT_PATH))
+        assert escalated != _compute_escalated(_load_events(INPUT_PATH))
+        assert all(row["issued_ms"] == 0 for row in escalated)
+
+
+def test_pipeline_patched():
+    ast.parse(PIPELINE.read_text())
+    code = _executable_text(PIPELINE.read_text())
+    for token in FORBIDDEN_TOKENS:
+        assert token not in code
+
+
+def test_repair_audit(diagnosis: dict, expected: dict, summary: dict):
+    audit = json.loads(REPAIR_AUDIT_PATH.read_text())
+    code = _executable_text(PIPELINE.read_text())
+    assert audit["patched_workflow"] == str(PIPELINE)
+    assert audit["processing_steps"] == SPEC_DATA["repair_audit"]["processing_steps"]
+    assert audit["removed_tokens"] == {token: token not in code for token in FORBIDDEN_TOKENS}
+    assert all(audit["removed_tokens"].values())
+    assert audit["pre_repair"]["pipeline_source_sha256"] == expected["broken_pipeline_sha256"]
+    assert audit["pre_repair"]["pipeline_tokens_present"] == {token: True for token in FORBIDDEN_TOKENS}
+    assert audit["post_repair"]["escalated_count"] == summary["escalated_count"]
+    assert audit["post_repair"]["rerun_escalated_count"] == summary["escalated_count"]
 
 
 def test_pipeline_reruns_idempotently(summary: dict, escalated_rows: list[dict], tmp_path_factory):

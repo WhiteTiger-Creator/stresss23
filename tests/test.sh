@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
 mkdir -p /logs/verifier
 
-# Always leave a reward behind, even on an early exit, so the verifier never
-# finishes without writing /logs/verifier/reward.txt.
-echo 0 > /logs/verifier/reward.txt
-
 if [ "$PWD" = "/" ]; then
     echo "Error: No working directory set. Please set a WORKDIR in your Dockerfile before running this script."
-    exit 0
+    exit 1
 fi
 
 set +e
