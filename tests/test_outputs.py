@@ -440,10 +440,12 @@ def _compute_summary(events: list[dict], override_rows: list[dict] | None = None
 
 
 def _escalation_ledger(signals: list[dict]) -> dict:
-    """Sequential escalation-pressure ledger per #PKI-5122/5123.
+    """Sequential escalation-pressure ledger per #PKI-5122/5123 and #PKI-5396.
 
     Carry propagates between consecutive rows in export order; the carry credit
-    is ceilinged while the gap decay and chain-size debit are floored.
+    is ceilinged while the gap decay and chain-size debit are floored. Per the
+    later #PKI-5396 ruling the pressure also couples to directed reach, gaining a
+    floored chain_reach_score // 6 term that affects the critical flag only.
     """
     previous_issued_ms = None
     previous_carry_out = 0
@@ -457,7 +459,11 @@ def _escalation_ledger(signals: list[dict]) -> dict:
             else max(previous_issued_ms - signal["issued_ms"], 0)
         )
         carry_in = max(previous_carry_out - (gap_ms // 150), 0)
-        pressure = signal["chain_risk_score"] + (-(-carry_in // 3))
+        pressure = (
+            signal["chain_risk_score"]
+            + (-(-carry_in // 3))
+            + (signal["chain_reach_score"] // 6)
+        )
         carry_out = min(
             carry_in + signal["chain_risk_score"] - (signal["chain_size"] // 2), 63
         )
@@ -1433,12 +1439,36 @@ def test_escalation_ledger_credit_is_ceilinged(summary: dict):
     for signal in signals:
         gap = 0 if prev_ms is None else max(prev_ms - signal["issued_ms"], 0)
         carry_in = max(prev_out - (gap // 150), 0)
-        pressure = signal["chain_risk_score"] + (carry_in // 3)
+        pressure = signal["chain_risk_score"] + (carry_in // 3) + (signal["chain_reach_score"] // 6)
         carry_out = min(carry_in + signal["chain_risk_score"] - (signal["chain_size"] // 2), 63)
         rows.append(f"{signal['cert_id']}|{pressure}|{1 if pressure >= 21 else 0}|{carry_out}")
         prev_ms, prev_out = signal["issued_ms"], carry_out
     floored = hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()
     assert summary["escalation_ledger_checksum"] != floored
+
+
+def test_escalation_pressure_couples_chain_reach(summary: dict):
+    """#PKI-5396: escalation_pressure gains a floored chain_reach_score // 6 term.
+
+    A ledger that reads chain risk and carry alone (the stale #PKI-5122 formula,
+    omitting the reach coupling) yields a different checksum on the shipped data,
+    so the reach term is load-bearing rather than cosmetic.
+    """
+    signals = _compute_escalated(_load_events(INPUT_PATH))
+    assert summary["escalation_ledger_checksum"] == _escalation_ledger(signals)[
+        "escalation_ledger_checksum"
+    ]
+    prev_ms, prev_out, rows = None, 0, []
+    for signal in signals:
+        gap = 0 if prev_ms is None else max(prev_ms - signal["issued_ms"], 0)
+        carry_in = max(prev_out - (gap // 150), 0)
+        # Omit the PKI-5396 reach term to prove it changes the ledger.
+        pressure = signal["chain_risk_score"] + (-(-carry_in // 3))
+        carry_out = min(carry_in + signal["chain_risk_score"] - (signal["chain_size"] // 2), 63)
+        rows.append(f"{signal['cert_id']}|{pressure}|{1 if pressure >= 21 else 0}|{carry_out}")
+        prev_ms, prev_out = signal["issued_ms"], carry_out
+    no_reach = hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()
+    assert summary["escalation_ledger_checksum"] != no_reach
 
 
 # --- Host containment: persistence and escalation left by the sync automation ---
