@@ -1,5 +1,5 @@
 {
-  "title": "Certwarden Signal Rollup — Audit & Export Spec",
+  "title": "Certwarden Signal Rollup \u2014 Audit & Export Spec",
   "version": "5.0",
   "human_implementation_guide": "/app/docs/output_contract.md",
   "quick_contract_index": {
@@ -71,6 +71,8 @@
       "chain_digest_checksum",
       "max_chain_reach_score",
       "chain_reach_digest_checksum",
+      "max_chain_influence_score",
+      "chain_influence_digest_checksum",
       "signal_digest_checksum",
       "critical_escalation_ids",
       "critical_escalation_count",
@@ -265,6 +267,8 @@
         "chain_digest_checksum",
         "max_chain_reach_score",
         "chain_reach_digest_checksum",
+        "max_chain_influence_score",
+        "chain_influence_digest_checksum",
         "signal_digest_checksum",
         "critical_escalation_ids",
         "critical_escalation_count",
@@ -364,7 +368,7 @@
         "run it again to verify idempotency"
       ],
       "frozen_original": "never write to /app/workflow/.export_report.original",
-      "rebuild_source": "Every `repair` invocation reconstructs the corrected workflow FROM the frozen pre-incident snapshot at /app/workflow/.export_report.original (which still contains the defects) and OVERWRITES the active /app/workflow/export_report.py with the corrected source BEFORE rerunning it. This must happen on every invocation regardless of prior state, and identically when a custom --output-dir is supplied — never assume the active workflow is already patched."
+      "rebuild_source": "Every `repair` invocation reconstructs the corrected workflow FROM the frozen pre-incident snapshot at /app/workflow/.export_report.original (which still contains the defects) and OVERWRITES the active /app/workflow/export_report.py with the corrected source BEFORE rerunning it. This must happen on every invocation regardless of prior state, and identically when a custom --output-dir is supplied \u2014 never assume the active workflow is already patched."
     },
     "canonicalization_contract": "issued_ms is coerced to an int: a bool/int/float is int()'d; a string is stripped then int()'d; a missing, non-numeric, or otherwise unparseable value is coerced to 0 (never raised as an error). severity and issuer are str(...).strip().lower() normalized. These coercions run before dedupe, matrix counts, and every checksum."
   },
@@ -438,7 +442,10 @@
         "chain_reach_depth",
         "chain_reach_path",
         "chain_reach_digest",
-        "signal_digest"
+        "signal_digest",
+        "chain_influence_score",
+        "chain_influence_rounds",
+        "chain_influence_digest"
       ],
       "sort": "issued_ms desc, severity rank desc, chain_risk_score desc, chain_reach_score desc, override_pressure_score desc, cert_id asc",
       "severities_included": [
@@ -478,7 +485,8 @@
     "chain_id": "first 10 lowercase SHA1 hex chars of comma_joined_chain_cert_ids",
     "chain_reach_digest": "first 12 lowercase SHA256 hex chars of chain_id|chain_reach_score|chain_reach_depth|comma_joined_chain_reach_path",
     "signal_digest": "first 12 lowercase SHA1 hex chars of cert_id|issued_ms|severity|issuer|detector|override_pressure_score|pressure_index|chain_id|chain_size|chain_span_ms|chain_risk_score|chain_digest|chain_reach_score|chain_reach_depth|comma_joined_chain_reach_path|chain_reach_digest",
-    "escalation_ledger_checksum": "SHA-256 over one line per signal row in escalated.jsonl export order, `cert_id|escalation_pressure|c|carry_out` with c=1 for an escalation-critical row else 0, joined by a single newline, no trailing newline, hashed over UTF-8. The values themselves are governed by the dossier."
+    "escalation_ledger_checksum": "SHA-256 over one line per signal row in escalated.jsonl export order, `cert_id|escalation_pressure|c|carry_out` with c=1 for an escalation-critical row else 0, joined by a single newline, no trailing newline, hashed over UTF-8. The values themselves are governed by the dossier.",
+    "chain_influence_digest": "first 12 lowercase SHA256 hex chars of chain_id|chain_influence_score|chain_influence_rounds"
   },
   "semantics_source": {
     "notes": "This document is the output contract only: CLI shapes, report schemas, exact key sets, checksum serialization and digest payload encodings. It does NOT define how values are derived.",
