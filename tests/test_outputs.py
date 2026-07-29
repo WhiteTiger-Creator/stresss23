@@ -8,10 +8,15 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+# The tests tree / fixtures location is parameterizable via $TEST_DIR (default /tests), so the
+# verifier is not pinned to a hardcoded mount point.
+TEST_DIR = Path(os.environ.get("TEST_DIR", "/tests"))
 
 OUTPUT_DIR = Path("/app/output")
 DIAGNOSIS_PATH = OUTPUT_DIR / "diagnosis.json"
@@ -26,7 +31,7 @@ DOSSIER_PATH = Path("/app/incident/export_dossier.md")
 INPUT_PATH = Path("/app/data/events.json")
 OVERRIDES_PATH = Path("/app/data/dismissal_overrides.json")
 REPORT_SPEC_PATH = Path("/app/docs/report_spec.json")
-ALT_INPUT = Path("/tests/fixtures/alt_events.json")
+ALT_INPUT = TEST_DIR / "fixtures" / "alt_events.json"
 BROKEN_PIPELINE_SHA256 = "583085d5087dfc0c7d869c84a22ccbc2bc634f334f7d8f5193bb262011089220"
 SPEC_DATA = json.loads(REPORT_SPEC_PATH.read_text())
 ISSUE_EVIDENCE_TERMS = SPEC_DATA["diagnosis_report"]["issues_found_item"]["evidence"][
@@ -37,6 +42,93 @@ FORBIDDEN_TOKENS = ('event["issued_at"]', 'severity == "critical"')
 ANOMALY_SEVERITIES = {"high", "critical"}
 SEVERITY_ORDER = ("critical", "high", "medium", "low")
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+CANDIDATE_USER = os.environ.get("CANDIDATE_USER", "cert-candidate")
+
+# Verifier-control commands are resolved from a fixed trusted PATH and invoked by absolute path,
+# so a shadow binary planted earlier in $PATH by the (root) agent during the solve phase cannot
+# subvert the privilege drop that isolates candidate code from the tests tree.
+_SAFE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+
+
+def _tool(name: str) -> str:
+    resolved = shutil.which(name, path=_SAFE_PATH)
+    return resolved if resolved is not None else f"/usr/bin/{name}"
+
+
+def _candidate_enabled() -> bool:
+    """True when the verifier can drop candidate code to the unprivileged candidate user."""
+    if os.geteuid() != 0:
+        return False
+    if shutil.which("runuser", path=_SAFE_PATH) is None:
+        return False
+    return (
+        subprocess.run([_tool("id"), CANDIDATE_USER], capture_output=True, check=False).returncode
+        == 0
+    )
+
+
+def _grant_traversal(path: Path) -> None:
+    """Give world traverse/read on the ancestors of a candidate-visible path (never under TEST_DIR)."""
+    for parent in Path(path).resolve().parents:
+        sp = str(parent)
+        if sp in ("/", "/tmp"):
+            break
+        if sp.startswith(str(TEST_DIR)):
+            continue
+        try:
+            os.chmod(parent, (os.stat(parent).st_mode & 0o777) | 0o055)
+        except OSError:
+            pass
+
+
+def _stage_input(path: Path) -> Path:
+    """Copy an input that lives outside /app to a candidate-readable temp file.
+
+    Candidate code runs as the unprivileged candidate, which cannot read the root-locked TEST_DIR
+    (nor a root-owned 0700 temp dir a test may have created), so any operational input not already
+    under /app is staged to a world-readable /tmp copy before the candidate is handed it.
+    """
+    src = Path(path)
+    if not _candidate_enabled() or str(src).startswith("/app/"):
+        return src
+    fd, tmp = tempfile.mkstemp(prefix="cand_in_", suffix="_" + src.name)
+    os.close(fd)
+    shutil.copy(src, tmp)
+    os.chmod(tmp, 0o644)
+    return Path(tmp)
+
+
+def _grant_candidate_write(*paths: Path) -> None:
+    """Hand ownership of files/dirs the candidate must write (output dirs, the patched workflow)."""
+    if not _candidate_enabled():
+        return
+    for p in paths:
+        try:
+            subprocess.run(
+                [_tool("chown"), "-R", f"{CANDIDATE_USER}:{CANDIDATE_USER}", str(p)],
+                check=False,
+                capture_output=True,
+            )
+            if Path(p).is_dir():
+                os.chmod(p, 0o777)
+                _grant_traversal(p)
+            elif Path(p).exists():
+                # A file the candidate must overwrite (e.g. the patched workflow) — ensure it is
+                # writable even if a prior copy stamped a read-only mode onto it.
+                os.chmod(p, 0o664)
+                _grant_traversal(p)
+        except OSError:
+            pass
+
+
+def _candidate_argv(argv: list[str], write_dirs: tuple[Path, ...] = ()) -> list[str]:
+    """Wrap a candidate-code argv to run as the unprivileged candidate, granting it write dirs."""
+    if not _candidate_enabled():
+        return argv
+    _grant_candidate_write(*write_dirs)
+    return [_tool("runuser"), "-u", CANDIDATE_USER, "--", *argv]
 
 
 def _normalize_ws(text: str) -> str:
@@ -634,19 +726,19 @@ def _run_pipeline(
     output_dir: Path = OUTPUT_DIR,
 ) -> subprocess.CompletedProcess[str]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    return subprocess.run(  # noqa: PLW1510
-        [
-            "python3",
-            str(pipeline),
-            "--input",
-            str(input_path),
-            "--output-dir",
-            str(output_dir),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
+    staged = _stage_input(input_path)
+    if _candidate_enabled() and not str(pipeline).startswith("/app/"):
+        # A pipeline handed from a test-created temp dir must be candidate-readable.
+        _grant_traversal(pipeline)
+        try:
+            os.chmod(pipeline, 0o644)
+        except OSError:
+            pass
+    argv = _candidate_argv(
+        [sys.executable, str(pipeline), "--input", str(staged), "--output-dir", str(output_dir)],
+        write_dirs=(output_dir,),
     )
+    return subprocess.run(argv, capture_output=True, text=True, timeout=30)  # noqa: PLW1510
 
 
 def _escalated_rows(path: Path = FLAGGED_PATH) -> list[dict]:
@@ -740,26 +832,43 @@ def test_override_checksum_contract_and_touching_merge():
 
 
 def test_cli_exists():
+    """The cert_audit CLI file is present at its contracted /app path."""
     assert CLI.exists(), f"CLI not found at {CLI}"
 
 
 def test_dossier_has_context():
+    """The incident dossier has at least the spec's minimum line count of context."""
     minimum = SPEC_DATA["context"]["minimum_line_count"]
     assert len(DOSSIER_PATH.read_text().splitlines()) >= minimum
 
 
 def test_repair_produces_required_outputs():
-    for path in (SUMMARY_PATH, MATRIX_PATH, FLAGGED_PATH, REPAIR_AUDIT_PATH):
+    """repair leaves exactly the five contracted artifacts in the output directory, no extras."""
+    required = {SUMMARY_PATH, MATRIX_PATH, FLAGGED_PATH, DIAGNOSIS_PATH, REPAIR_AUDIT_PATH}
+    for path in required:
         assert path.exists(), f"missing required output: {path}"
+    present_files = {p for p in OUTPUT_DIR.iterdir() if p.is_file()}
+    extras = present_files - required
+    assert not extras, (
+        "output directory must contain exactly the five contracted files; "
+        f"unexpected extras: {sorted(str(p) for p in extras)}"
+    )
+    subdirs = [p for p in OUTPUT_DIR.iterdir() if p.is_dir()]
+    assert not subdirs, (
+        f"output directory must hold no subdirectories (e.g. a leftover rerun dir); found "
+        f"{sorted(str(p) for p in subdirs)}"
+    )
 
 
 def test_diagnosis_schema_repaired(diagnosis: dict):
+    """The diagnosis carries all required top-level keys and reports pipeline_status 'repaired'."""
     for key in ("pipeline_status", "issues_found", "input_stats", "verified_summary", "output_paths"):
         assert key in diagnosis
     assert diagnosis["pipeline_status"] == "repaired"
 
 
 def test_output_paths_exact(diagnosis: dict):
+    """The diagnosis output_paths point at the exact contracted summary, escalated, and matrix files."""
     paths = diagnosis["output_paths"]
     assert paths["summary_json"] == str(SUMMARY_PATH)
     assert paths["escalated_jsonl"] == str(FLAGGED_PATH)
@@ -767,17 +876,20 @@ def test_output_paths_exact(diagnosis: dict):
 
 
 def test_issues_found_exactly_six_allowed_ids(diagnosis: dict):
+    """issues_found holds exactly six entries whose ids equal the spec's allowed issue-id set."""
     assert len(diagnosis["issues_found"]) == 6
     assert {item["id"] for item in diagnosis["issues_found"]} == set(REQUIRED_ISSUE_IDS)
 
 
 def test_issue_item_required_fields(diagnosis: dict):
+    """Every issues_found item carries id, severity, description, resolution, and evidence fields."""
     for issue in diagnosis["issues_found"]:
         for key in ("id", "severity", "description", "resolution", "evidence"):
             assert key in issue
 
 
 def test_issue_evidence(diagnosis: dict):
+    """Each issue's evidence contains the required terms and a pipeline_evidence quote from the original."""
     original_pipeline = ORIGINAL_PIPELINE.read_text()
     issues = {item["id"]: item for item in diagnosis["issues_found"]}
     for issue_id, terms in ISSUE_EVIDENCE_TERMS.items():
@@ -796,12 +908,14 @@ def test_issue_evidence(diagnosis: dict):
 
 
 def test_dossier_quotes_are_verbatim(diagnosis: dict, dossier_text: str):
+    """Each issue's dossier_quote appears verbatim in the dossier once whitespace is normalized."""
     for issue in diagnosis["issues_found"]:
         quote = _normalize_ws(issue["evidence"]["dossier_quote"])
         assert quote in dossier_text
 
 
 def test_input_stats(diagnosis: dict, expected: dict):
+    """The diagnosis input_stats cert count, unique ids, and issuers match the independent computation."""
     stats = diagnosis["input_stats"]
     assert stats["cert_count"] == expected["cert_count"]
     assert stats["unique_cert_ids"] == expected["unique_ids"]
@@ -809,6 +923,7 @@ def test_input_stats(diagnosis: dict, expected: dict):
 
 
 def test_verified_summary_matches_independent_computation(diagnosis: dict, expected: dict):
+    """Every field of the diagnosis verified_summary equals the independently recomputed expected value."""
     verified = diagnosis["verified_summary"]
     for key in (
         "schema_version",
@@ -843,25 +958,30 @@ def test_verified_summary_matches_independent_computation(diagnosis: dict, expec
 
 
 def test_summary_computed_from_events(summary: dict):
+    """The written summary.json equals a summary recomputed directly from the input events."""
     assert summary == _compute_summary(_load_events(INPUT_PATH))
 
 
 def test_issuer_matrix_matches_independent_computation(expected: dict):
+    """The written issuer_matrix.json equals the matrix independently built from canonicalized events."""
     matrix = json.loads(MATRIX_PATH.read_text())
     assert matrix == expected["expected_issuer_matrix"]
     assert matrix == _build_issuer_matrix(_canonicalize_events(_load_events(INPUT_PATH)))
 
 
 def test_escalated_computed_from_events(escalated_rows: list[dict]):
+    """The written escalated.jsonl rows equal the escalated set recomputed from the input events."""
     assert escalated_rows == _compute_escalated(_load_events(INPUT_PATH))
 
 
 def test_escalated_sorted_descending(escalated_rows: list[dict], expected: dict):
+    """Escalated rows are ordered by descending issued_ms, matching the expected id and timestamp sequences."""
     assert [row["cert_id"] for row in escalated_rows] == expected["expected_escalated_ids_desc"]
     assert [row["issued_ms"] for row in escalated_rows] == expected["expected_escalated_ms_desc"]
 
 
 def test_escalated_severities(escalated_rows: list[dict]):
+    """Every escalated row is high/critical and carries well-typed chain, pressure, and digest fields."""
     for row in escalated_rows:
         assert row["severity"] in ANOMALY_SEVERITIES
         assert isinstance(row["override_pressure_score"], int)
@@ -878,6 +998,7 @@ def test_escalated_severities(escalated_rows: list[dict]):
 
 
 def test_escalated_jsonl_compact_format():
+    """Each escalated.jsonl line is compact JSON with no whitespace after separators."""
     for line in FLAGGED_PATH.read_text().splitlines():
         if not line.strip():
             continue
@@ -887,6 +1008,7 @@ def test_escalated_jsonl_compact_format():
 
 
 def test_original_snapshot_preserved(expected: dict):
+    """The original pipeline snapshot is preserved intact, hashing to the broken SHA with its buggy tokens."""
     assert ORIGINAL_PIPELINE.exists()
     digest = hashlib.sha256(ORIGINAL_PIPELINE.read_bytes()).hexdigest()
     assert digest == expected["broken_pipeline_sha256"]
@@ -920,6 +1042,7 @@ def test_pipeline_output_tracks_its_input(tmp_path_factory):
 
 
 def test_repair_runtime_does_not_read_tests_tree():
+    """repair succeeds while an injected guard blocks any read under /tests, proving it never reads the tests tree."""
     with tempfile.TemporaryDirectory() as tmp:
         guard = Path(tmp) / "sitecustomize.py"
         guard.write_text(
@@ -952,23 +1075,26 @@ def test_repair_runtime_does_not_read_tests_tree():
         out = Path(tmp) / "out"
         env = dict(os.environ)
         env["PYTHONPATH"] = tmp
+        if _candidate_enabled():
+            # The candidate must read the planted guard module on PYTHONPATH and create `out`
+            # inside this temp dir, so make the dir candidate-writable and its files readable.
+            _grant_traversal(Path(tmp))
+            os.chmod(tmp, 0o777)
+            for child in Path(tmp).iterdir():
+                if child.is_file():
+                    os.chmod(child, 0o644)
+        argv = _candidate_argv(
+            [sys.executable, str(CLI), "repair", "--output-dir", str(out)],
+            write_dirs=(out, PIPELINE),
+        )
         result = subprocess.run(  # noqa: PLW1510
-            [
-                "python3",
-                str(CLI),
-                "repair",
-                "--output-dir",
-                str(out),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=env,
+            argv, capture_output=True, text=True, timeout=60, env=env,
         )
         assert result.returncode == 0, result.stderr
 
 
 def test_broken_snapshot_produces_wrong_export(expected: dict):
+    """Running the original broken snapshot yields wrong summary/escalated output with all issued_ms zeroed."""
     with tempfile.TemporaryDirectory() as tmp:
         broken = Path(tmp) / "export_report.py"
         out = Path(tmp) / "out"
@@ -983,6 +1109,7 @@ def test_broken_snapshot_produces_wrong_export(expected: dict):
 
 
 def test_pipeline_patched():
+    """The live pipeline parses and its executable code no longer contains the forbidden buggy tokens."""
     ast.parse(PIPELINE.read_text())
     code = _executable_text(PIPELINE.read_text())
     for token in FORBIDDEN_TOKENS:
@@ -990,6 +1117,7 @@ def test_pipeline_patched():
 
 
 def test_repair_audit(diagnosis: dict, expected: dict, summary: dict):
+    """The repair_audit records the patched workflow, processing steps, removed tokens, and pre/post repair state."""
     audit = json.loads(REPAIR_AUDIT_PATH.read_text())
     code = _executable_text(PIPELINE.read_text())
     assert audit["patched_workflow"] == str(PIPELINE)
@@ -1003,6 +1131,7 @@ def test_repair_audit(diagnosis: dict, expected: dict, summary: dict):
 
 
 def test_pipeline_reruns_idempotently(summary: dict, escalated_rows: list[dict], tmp_path_factory):
+    """Re-running the patched pipeline reproduces the identical summary and escalated rows."""
     rerun_dir = tmp_path_factory.mktemp("rerun")
     result = _run_pipeline(output_dir=rerun_dir)
     assert result.returncode == 0, result.stderr
@@ -1013,6 +1142,7 @@ def test_pipeline_reruns_idempotently(summary: dict, escalated_rows: list[dict],
 
 
 def test_patched_pipeline_supports_alternate_input(expected: dict, tmp_path_factory):
+    """The patched pipeline run on the alternate input produces outputs matching that stream's expected values."""
     alt_dir = tmp_path_factory.mktemp("alt")
     alt_input = Path(expected["alternate_input"])
     result = _run_pipeline(input_path=alt_input, output_dir=alt_dir)
@@ -1043,13 +1173,12 @@ def test_patched_pipeline_supports_alternate_input(expected: dict, tmp_path_fact
     assert [row["cert_id"] for row in escalated] == alt["escalated_ids_desc"]
 
 
-def test_cli_diagnose_subcommand(expected: dict, dossier_text: str):
-    report = OUTPUT_DIR / "diagnosis_redundant.json"
-    if report.exists():
-        report.unlink()
-    result = subprocess.run(  # noqa: PLW1510
+def test_cli_diagnose_subcommand(expected: dict, dossier_text: str, tmp_path_factory):
+    """diagnose emits a complete diagnosed-mode report (issues + input_stats, no repaired keys)."""
+    report = tmp_path_factory.mktemp("diag_redundant") / "diagnosis_redundant.json"
+    argv = _candidate_argv(
         [
-            "python3",
+            sys.executable,
             str(CLI),
             "diagnose",
             "--dossier",
@@ -1057,10 +1186,9 @@ def test_cli_diagnose_subcommand(expected: dict, dossier_text: str):
             "--report",
             str(report),
         ],
-        capture_output=True,
-        text=True,
-        timeout=60,
+        write_dirs=(report.parent,),
     )
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=60)  # noqa: PLW1510
     assert report.exists(), f"diagnose failed (rc={result.returncode}): {result.stderr}"
     data = json.loads(report.read_text())
     assert data["pipeline_status"] == "diagnosed"
@@ -1084,17 +1212,16 @@ def test_cli_diagnose_subcommand(expected: dict, dossier_text: str):
 def test_diagnose_rejects_stray_input_flag(tmp_path_factory):
     """diagnose is stateless: it accepts only --dossier/--report and rejects a stray --input."""
     report = tmp_path_factory.mktemp("diag_reject") / "diagnosis.json"
-    result = subprocess.run(  # noqa: PLW1510
+    argv = _candidate_argv(
         [
-            "python3", str(CLI), "diagnose",
+            sys.executable, str(CLI), "diagnose",
             "--dossier", str(DOSSIER_PATH),
             "--report", str(report),
             "--input", str(DOSSIER_PATH),
         ],
-        capture_output=True,
-        text=True,
-        timeout=60,
+        write_dirs=(report.parent,),
     )
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=60)  # noqa: PLW1510
     assert result.returncode != 0, "diagnose must reject a stray --input flag"
     assert not report.exists(), "diagnose must not write a report when given an unknown flag"
 
@@ -1102,16 +1229,16 @@ def test_diagnose_rejects_stray_input_flag(tmp_path_factory):
 def test_repair_repatches_reset_workflow_with_custom_output_dir(
     tmp_path_factory, expected: dict
 ):
+    """repair re-patches a reset broken workflow and writes correct outputs into a custom --output-dir."""
     custom_dir = tmp_path_factory.mktemp("custom_output")
     current = PIPELINE.read_text()
     try:
         shutil.copy(ORIGINAL_PIPELINE, PIPELINE)
-        result = subprocess.run(  # noqa: PLW1510
-            ["python3", str(CLI), "repair", "--output-dir", str(custom_dir)],
-            capture_output=True,
-            text=True,
-            timeout=60,
+        argv = _candidate_argv(
+            [sys.executable, str(CLI), "repair", "--output-dir", str(custom_dir)],
+            write_dirs=(custom_dir, PIPELINE),
         )
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=60)  # noqa: PLW1510
         assert result.returncode == 0, result.stderr
         repaired_source = PIPELINE.read_text()
         assert 'event["issued_at"]' not in repaired_source
@@ -1128,7 +1255,91 @@ def test_repair_repatches_reset_workflow_with_custom_output_dir(
         PIPELINE.write_text(current)
 
 
+def test_repair_input_selects_event_stream_and_outputs_exactly_five(
+    tmp_path_factory, expected: dict
+):
+    """repair --input selects the event stream: its five outputs derive from the supplied stream
+    (not the default /app/data/events.json), and the output directory holds exactly the five
+    contracted files with no rerun subdirectory or other extras."""
+    out = tmp_path_factory.mktemp("repair_input")
+    current = PIPELINE.read_text()
+    try:
+        staged = _stage_input(ALT_INPUT)
+        argv = _candidate_argv(
+            [sys.executable, str(CLI), "repair", "--input", str(staged), "--output-dir", str(out)],
+            write_dirs=(out, PIPELINE),
+        )
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=60)  # noqa: PLW1510
+        assert result.returncode == 0, result.stderr
+    finally:
+        PIPELINE.write_text(current)
+
+    names = sorted(p.name for p in out.iterdir())
+    assert names == [
+        "diagnosis.json",
+        "escalated.jsonl",
+        "issuer_matrix.json",
+        "repair_audit.json",
+        "summary.json",
+    ], f"repair --output-dir must contain exactly the five contracted files, has {names}"
+
+    alt_events = _load_events(ALT_INPUT)
+    alt_summary = _compute_summary(alt_events)
+    out_summary = json.loads((out / "summary.json").read_text())
+    # The outputs derive from the ALTERNATE stream, and differ from the default-stream run.
+    assert out_summary["signal_digest_checksum"] == alt_summary["signal_digest_checksum"]
+    assert out_summary["escalation_ledger_checksum"] == alt_summary["escalation_ledger_checksum"]
+    assert out_summary["escalated_count"] == alt_summary["escalated_count"]
+    assert out_summary != json.loads(SUMMARY_PATH.read_text())
+    escalated = _escalated_rows(out / "escalated.jsonl")
+    assert [row["cert_id"] for row in escalated] == expected["alternate_expected"][
+        "escalated_ids_desc"
+    ]
+    diagnosis = json.loads((out / "diagnosis.json").read_text())
+    assert diagnosis["input_stats"]["cert_count"] == len(alt_events)
+
+
+def test_repair_rejects_events_flag(tmp_path_factory):
+    """There is no --events flag: repair selects the stream with --input, so --events is rejected."""
+    out = tmp_path_factory.mktemp("repair_events")
+    argv = _candidate_argv(
+        [sys.executable, str(CLI), "repair", "--events", str(INPUT_PATH), "--output-dir", str(out)],
+        write_dirs=(out,),
+    )
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=60)  # noqa: PLW1510
+    assert result.returncode != 0, "repair must reject the unknown --events flag"
+    assert not (out / "summary.json").exists(), (
+        "repair must not write outputs when given an unknown flag"
+    )
+
+
+def test_candidate_cannot_read_tests_tree():
+    """OS-level proof that candidate code runs unprivileged and cannot read the locked tests tree,
+    so it cannot import the verifier's reference implementation or read the fixtures to fabricate
+    passing artifacts. Fails if the privilege drop is ever bypassed (e.g. a shadowed runuser)."""
+    if not _candidate_enabled():
+        pytest.skip("requires root plus the unprivileged candidate to enforce OS isolation")
+    assert oct(TEST_DIR.stat().st_mode)[-3:] == "700", f"{TEST_DIR} must be locked to 0700 for grading"
+    probe = (
+        "import os, sys\n"
+        f"targets = [{str(TEST_DIR / 'test_outputs.py')!r}, {str(ALT_INPUT)!r}]\n"
+        "for target in targets:\n"
+        "    try:\n"
+        "        os.close(os.open(target, os.O_RDONLY)); print('READABLE', target); sys.exit(2)\n"
+        "    except OSError:\n"
+        "        pass\n"
+        "print('DENIED'); sys.exit(0)\n"
+    )
+    argv = [_tool("runuser"), "-u", CANDIDATE_USER, "--", sys.executable, "-c", probe]
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=30)  # noqa: PLW1510
+    assert result.returncode == 0 and "DENIED" in result.stdout, (
+        f"candidate could read the tests tree (isolation bypassed): "
+        f"rc={result.returncode} out={result.stdout!r} err={result.stderr!r}"
+    )
+
+
 def test_dedupe_tie_break_severity_and_detector():
+    """Dedupe of same-id, same-time events keeps the higher severity, breaking further ties by larger detector."""
     events = [
         {
             "cert_id": "x1",
@@ -1162,6 +1373,7 @@ def test_dedupe_tie_break_severity_and_detector():
 
 
 def test_dismissed_string_normalization_excludes_signal():
+    """String dismissed values like 'true' and '1' are normalized to True, excluding those rows from signals."""
     events = [
         {
             "cert_id": "m1",
@@ -1193,6 +1405,7 @@ def test_dismissed_string_normalization_excludes_signal():
 
 
 def test_escalated_sort_tie_breaks_by_severity_then_cert_id():
+    """Equal-timestamp escalated rows sort by descending severity, then ascending cert_id."""
     events = [
         {
             "cert_id": "c2",
@@ -1224,6 +1437,7 @@ def test_escalated_sort_tie_breaks_by_severity_then_cert_id():
 
 
 def test_pipeline_coerces_issued_ms_and_normalizes_outputs(tmp_path_factory):
+    """The pipeline coerces messy issued_ms/severity/issuer/detector fields into normalized output values."""
     events = [
         {
             "cert_id": "p1",
@@ -1270,6 +1484,7 @@ def test_pipeline_coerces_issued_ms_and_normalizes_outputs(tmp_path_factory):
 
 
 def test_pipeline_dedupe_tie_break_prefers_non_dismissed_then_detector(tmp_path_factory):
+    """The pipeline's dedupe tie-break prefers the non-dismissed row, then the larger detector, keeping one row."""
     events = [
         {
             "cert_id": "d1",
@@ -1312,6 +1527,7 @@ def test_pipeline_dedupe_tie_break_prefers_non_dismissed_then_detector(tmp_path_
 
 
 def test_override_source_path_affects_output(tmp_path_factory):
+    """Emptying the dismissal overrides changes the compaction checksum and escalates more rows than the base run."""
     original_overrides = OVERRIDES_PATH.read_text()
     try:
         base_dir = tmp_path_factory.mktemp("base_override")
@@ -1339,6 +1555,7 @@ def test_override_source_path_affects_output(tmp_path_factory):
 
 
 def test_override_compaction_and_scope_exercised(tmp_path_factory):
+    """Overrides merge touching windows and apply by scope, suppressing matched high/all events while keeping others."""
     original_overrides = OVERRIDES_PATH.read_text()
     try:
         override_rows = [

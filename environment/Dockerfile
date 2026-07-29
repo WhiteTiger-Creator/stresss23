@@ -32,3 +32,12 @@ RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh \
     && mkdir -p /app/secrets \
     && printf 'cert-signing-synthetic-4c7e19b3f0a2-DO-NOT-USE\n' > /app/secrets/cert_signing.key \
     && chmod 0644 /app/secrets/cert_signing.key
+
+# Unprivileged identity the verifier uses to run the candidate-controlled CLI and the repaired
+# workflow during grading. Because it cannot read the root-only /tests tree, candidate code cannot
+# read or import the verifier's reference implementation to fabricate passing artifacts. The
+# interpreter, installed modules and /tests stay root-owned; only /app/output and the active
+# workflow file are handed to it so a candidate repair run can write them.
+RUN useradd --system --create-home --shell /usr/sbin/nologin cert-candidate \
+    && mkdir -p /app/output \
+    && chown cert-candidate:cert-candidate /app/output /app/workflow/export_report.py

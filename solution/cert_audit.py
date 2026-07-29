@@ -6,8 +6,10 @@ import argparse
 import ast
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 EVENTS_PATH = Path("/app/data/events.json")
@@ -224,11 +226,10 @@ def cmd_diagnose(dossier: Path, report_path: Path) -> None:
     report_path.write_text(json.dumps(report, indent=2) + "\n")
 
 
-def cmd_repair(output_dir: Path) -> None:
+def cmd_repair(output_dir: Path, input_path: Path = EVENTS_PATH) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     diagnosis_path = output_dir / "diagnosis.json"
     audit_path = output_dir / "repair_audit.json"
-    rerun_dir = output_dir / "rerun"
     dossier_path = Path("/app/incident/export_dossier.md")
 
     spec = load_spec()
@@ -245,32 +246,35 @@ def cmd_repair(output_dir: Path) -> None:
             sys.executable,
             str(PIPELINE_PATH),
             "--input",
-            str(EVENTS_PATH),
+            str(input_path),
             "--output-dir",
             str(output_dir),
         ],
         check=True,
     )
 
-    if rerun_dir.exists():
-        for child in rerun_dir.iterdir():
-            child.unlink()
-    else:
-        rerun_dir.mkdir(parents=True, exist_ok=True)
+    # Idempotency re-run happens in a private temp directory OUTSIDE the requested output
+    # directory, so the contracted output directory holds exactly its five artifacts.
+    rerun_dir = Path(tempfile.mkdtemp(prefix="cert_repair_rerun_"))
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(PIPELINE_PATH),
+                "--input",
+                str(input_path),
+                "--output-dir",
+                str(rerun_dir),
+            ],
+            check=True,
+        )
+        rerun_escalated_count = json.loads((rerun_dir / "summary.json").read_text())[
+            "escalated_count"
+        ]
+    finally:
+        shutil.rmtree(rerun_dir, ignore_errors=True)
 
-    subprocess.run(
-        [
-            sys.executable,
-            str(PIPELINE_PATH),
-            "--input",
-            str(EVENTS_PATH),
-            "--output-dir",
-            str(rerun_dir),
-        ],
-        check=True,
-    )
-
-    events = load_events()
+    events = load_events(input_path)
     summary = json.loads((output_dir / "summary.json").read_text())
     diagnosis = build_diagnosis_report("repaired", events, issues, summary, output_dir)
     diagnosis_path.write_text(json.dumps(diagnosis, indent=2) + "\n")
@@ -283,9 +287,7 @@ def cmd_repair(output_dir: Path) -> None:
         "pre_repair": pre_audit,
         "post_repair": {
             "escalated_count": summary["escalated_count"],
-            "rerun_escalated_count": json.loads((rerun_dir / "summary.json").read_text())[
-                "escalated_count"
-            ],
+            "rerun_escalated_count": rerun_escalated_count,
         },
     }
     audit_path.write_text(json.dumps(audit, indent=2) + "\n")
@@ -301,12 +303,13 @@ def main() -> None:
 
     repair = sub.add_parser("repair")
     repair.add_argument("--output-dir", type=Path, default=Path("/app/output"))
+    repair.add_argument("--input", type=Path, default=EVENTS_PATH)
 
     args = parser.parse_args()
     if args.command == "diagnose":
         cmd_diagnose(args.dossier, args.report)
     else:
-        cmd_repair(args.output_dir)
+        cmd_repair(args.output_dir, args.input)
 
 
 if __name__ == "__main__":
